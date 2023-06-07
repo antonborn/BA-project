@@ -384,7 +384,7 @@ reshape2::melt(meandf_chao) %>%
 
 
 ## Gloomer
-
+#https://github.com/farhadm1990/16S-rRNA-amplicon/blob/main/R_steps.md#creating-a-stacked-barplot-for-visualizating-the-compositon-of-microbiota-in-different-taxonomic-level
 
 ```{r, taxa agglomeration Recepient }
 #A function to create unique names for each ASV. It removes any NA in Order level then attempts to use the name of one level higher taxa for those 
