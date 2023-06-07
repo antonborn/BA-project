@@ -23,7 +23,7 @@ invisible(lapply(c(p1,p2), load_package))
 
 ```{r, data}
 #donor
-tax_don = read.table("/Users/antonborn/Desktop/ba kodning/taxonomy_donor.txt", sep = "\t", header = T)
+tax_don = read.table("taxonomy_donor.txt", sep = "\t", header = T)
 
 
 
@@ -37,13 +37,13 @@ for(i in 2:ncol(tax_don)){
 colnames(tax_don)[1] <- "otu"
 tax_don <- column_to_rownames(tax_don, "otu")
 
-otu_don = read_tsv("/Users/antonborn/Desktop/ba kodning/otu_donor.txt") 
+otu_don = read_tsv("otu_donor.txt") 
 colnames(otu_don)[1] <- "otu"
 otu_don <- column_to_rownames(otu_don, "otu")
 #recipient
 
 
-tax_rec = read_tsv("/Users/antonborn/Desktop/ba kodning/taxonomy_recepient.txt") %>% as.matrix()
+tax_rec = read_tsv("taxonomy_recepient.txt") %>% as.matrix()
 
 
 
@@ -58,7 +58,7 @@ colnames(tax_rec)[1] <- "otu"
 rownames(tax_rec) <- tax_rec[,1]
 tax_rec = tax_rec[, -1]
 
-otu_rec = read_tsv("/Users/antonborn/Desktop/ba kodning/otu_recepient.txt")
+otu_rec = read_tsv("otu_recepient.txt")
 colnames(otu_rec)[1] <- "otu"
 otu_rec <- column_to_rownames(otu_rec, "otu")
 
