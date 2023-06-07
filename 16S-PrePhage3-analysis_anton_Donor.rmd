@@ -85,116 +85,11 @@ metadata <- metadata[-1,] # remove first row
 OTU = otu_table(as.matrix(otu), taxa_are_rows = TRUE)
 TAX = phyloseq::tax_table(as.matrix(tax.clean))
 SAMPLE <- sample_data(metadata)
-# TREE = read_tree("tree.nwk")
+
 # merge the data
 ps <- phyloseq(OTU, TAX, SAMPLE)
 
 saveRDS(ps, "ps.test.dbrda.rds")
-```
-#tax
-```{r}
-tax
-```
-
-#tax clean
-```{r}
-tax.clean
-```
-
-# Rarefaction curve
-```{r}
-
-# Extract the OTU table from the phyloseq object
-
-
-mat <- t(otu_table(ps))
-
-class(mat) <- "matrix"
-class(mat)
-# Calculate the total number of reads (samples)
-raremax <- min(rowSums(mat))
-
-# Create the rarefaction curve
-rarecurve(mat, step = 100, sample = raremax, col = "blue", label = TRUE)
-```
-
-
-```{r}
-set.seed(111) # keep result reproductive
-ps.rarefied = rarefy_even_depth(ps, rngseed=1, sample.size=1000, replace=F)
-meta_test <- sample_data(ps.rarefied)
-meta_test$Group <- sub("FFT2","FFT",meta_test$Group)
-meta_test$Group <- sub("FFT1","FFT",meta_test$Group)
-meta_test$Group <- sub("Control2","Control",meta_test$Group)
-meta_test$Group <- sub("Control1","Control",meta_test$Group)
-sample_data(ps.rarefied)<-meta_test
-saveRDS(ps.rarefied, "ps.rarefied.test.dbrda.rds")
-#meta_test <- sample_data(ps.rarefied)
-#meta_test$Group <- sub("FFT2","FFT",meta_test$Group)
-#meta_test$Group <- sub("FFT1","FFT",meta_test$Group)
-#meta_test$Group <- sub("Control2","Control",meta_test$Group)
-#meta_test$Group <- sub("Control1","Control",meta_test$Group)
-#sample_data(ps.rarefied)<-meta_test
-#print(ps.rarefied)
-#print(meta_test)
-colSums(otu_table(ps.rarefied))
-ggplot2::qplot(rowSums(otu_table(ps.rarefied)))
-ggplot2::qplot(log(rowSums(otu_table(ps))), binwidth = 0.1)
-DESeq2::varianceStabilizingTransformation(otu_table(ps))
-```
-
-
-
-# Alpha diversity
-
-```{r}
-plot_richness(ps.rarefied, x="Group", measures=c("Observed", "Shannon")) +
-  geom_boxplot() +
-  theme_classic() +
-  theme(strip.background = element_blank(), axis.text.x.bottom = element_text(angle = -90))
-```
-
-## By Treatment of pig
-
-```{r, eval = T, include = T, echo = F, message = F, warning=FALSE}
-ps_no_control <- subset_samples(ps.rarefied, Group %in% c("Control", "FFT"))
-
-#Normalize to mean read count
-standf = function(x, t=total) round(t * (x / sum(x)))
-total = median(sample_sums(ps_no_control))
-PSB.R = transform_sample_counts(ps_no_control, standf)
-
-#Set desired alpha diversity metrics
-
-alpha_met <- c("Observed","Shannon")
-
-variable <- c("Group")
-
-
-alpha.Treatment <- plot_richness(PSB.R, measures=alpha_met , x=variable, color=variable) + 
-  geom_boxplot(alpha=0.1, lwd = 0.5) +
-  ggtitle(bquote(bold("Shannon and Observed diversity as a measure for Alpha Diversity"))) +
-  scale_color_jco() +
-  theme_classic() +
-  theme(text = element_text(size = 8),
-        axis.line=element_line(size=1),
-        axis.text=element_text(size = 8, colour = "Black"),
-        axis.ticks=element_line(size=1, colour = "Black"),
-        strip.background = element_rect(colour = "white", fill = "white"),
-        axis.text.x=element_text(angle = 45, hjust = 1),
-        strip.text.x = element_text(size = 8, angle = 0),
-        legend.text = element_text(size = 8)
-  ) +
-                  scale_color_manual(
-                    values=c("#e34a33", "#31a354"),
-                    breaks = c( "Control", "FFT"),
-                    labels = c( "Control", "FFT")
-                  )+
-  labs(x="Group",
-       y="Alpha diversity")
-
-
-alpha.Treatment
 
 ```
 
