@@ -1,6 +1,5 @@
 ---
 title: "PrePhage3 pre analysis"
-author:
 date: "2023-04-17"
 output: html_document
 ---
@@ -103,7 +102,6 @@ tax.clean
 # Rarefaction curve
 ```{r}
 # Extract the OTU table from the phyloseq object
-
 mat <- t(otu_table(ps))
 
 class(mat) <- "matrix"
@@ -208,20 +206,13 @@ meta_cleaned$NEC_incidence <- ifelse(meta_cleaned$Colon_score >= 4, "NEC", "No N
 
 # Create a boxplot with scatter points
 ggplot(filtered_meta, aes(x = Group, y = Growth, fill = Group)) +
-  geom_boxplot(alpha = 0) +
-  geom_jitter() +
-  scale_fill_manual(values = c("steelblue", "firebrick3")) +
+  geom_boxplot(alpha = 0.8) +
+  geom_jitter(width = 0.2, height = 0) +
+  scale_fill_manual(values = c("steelblue", "firebrick3"), labels = c("Control", "FFT")) +
   labs(x = "Treatment", y = "Growth (g/day)") +
   ggtitle("Boxplot of Growth per day by Treatment Type") +
-  theme_minimal()
-
-ggplot(NEC_leuk_df, aes(x = factor(NEC_score), y = Total.leukocytes, fill = factor(NEC_score))) +
-  geom_boxplot() +
-  geom_jitter(width = 0.2, height = 0, color = "black", alpha = 1) +
-  scale_fill_manual(values = c("steelblue", "steelblue", "firebrick3", "firebrick3")) +
-  labs(x = "NEC Score", y = "Total Leukocytes", fill = "NEC Score") +
-  ggtitle("Total Leukocytes by NEC Score")
-
+  theme_minimal() +
+  theme(legend.position = "right")
 
 # Subset the metadata dataset for 'FFT' and 'Control' groups
 fft_data <- metadata[metadata$Group == "FFT", "Growth"]
@@ -233,13 +224,10 @@ result <- t.test(fft_data$Growth, control_data$Growth, var.equal = FALSE)
 # Print the t-test results
 print(result)
 
-
-
 ```
 
 
-## Statistic
-We could see tongue samples had the lowest alpha diversity. Next, some statistics: pairwise test with Wilcoxon rank-sum test, corrected by FDR method. For the number of observed tags
+## Statistics
 ```{r}
 rich = estimate_richness(ps_no_control, measures = c("Observed", "Shannon"))
 wilcox.observed <- pairwise.wilcox.test(rich$Observed, 
@@ -309,7 +297,7 @@ beta.id_jaccard <- phyloseq::plot_ordination(ps_no_control, GP.ord_jaccard, colo
 
 beta.id_jaccard 
 
-#
+#Anova/Adonis
 dist = phyloseq::distance(ps_no_control, method="jaccard")
 anova_jac$Group <- factor(anova_jac$Group, levels = c("Control", "FFT"))
 
@@ -317,7 +305,6 @@ anova_jac <- data.frame(phyloseq::sample_data(ps_no_control))
 
 test.adonis <- vegan::adonis2(t(ps_no_control@otu_table) ~ Group, data = anova_jac, method = "jaccard")
 test.adonis
-
 
 vegan::betadisper(test.adonis )
 
@@ -327,39 +314,6 @@ test.adonis
 scores(test.adonis, display = "site")
 
 ```
-
-```{r}
-
-# Create the phyloseq object
-meta_cleaned <- phyloseq(otu_table, sample_data)
-sample_data$NEC_incidence[sample_data$NEC_incidence == "No NEC"] <- "No_NEC"
-sample_data <- sample_data %>% filter(NEC_incidence != "NA") 
-
-
-# Continue with the rest of your analysis
-dist <- phyloseq::distance(meta_cleaned, method = "jaccard")
-bray_dist = phyloseq::distance(OTU, method = "bray")
-
-anova_jac <- data.frame(phyloseq::sample_data(meta_cleaned))
-sample_data$NEC_incidence <- factor(sample_data$NEC_incidence, levels = c("NEC", "No_NEC"))
-samp_df = sample_data[sample_data$tax_id %in% dimnames(dist), ]
-
-test.adonis <- vegan::adonis2(dist ~ NEC_incidence + , data = samp_df)
-?adonis2
-# Bray adonis
-
-bray_dist = as.matrix(bray_dist)
-
-bray_dist = bray_dist[rownames(bray_dist) %in% samp_df$tax_id, colnames(bray_dist) %in% samp_df$tax_id] 
-samp_df$
-
-adonis_bray <- vegan::adonis2(bray_dist ~ NEC_incidence + Group, data = samp_df)
-
-
-
-```
-
-
 
 ## Group：axis1：2
 ```{r, eval = T, include = T, echo = F, message = F}
@@ -383,11 +337,12 @@ beta.treatment
 ```
 ## Treatment group with only Control1 and FFT1
 ```{r, eval = T, include = T, echo = F, message = F}
-#Keep only true samples
+#Keep true samples
 ps_no_control <- subset_samples(ps.rarefied, Group %in% c("Control","FFT"))
 GP.ord <- ordinate(ps_no_control, "PCoA", "bray")
 
-beta.treatment = phyloseq::plot_ordination(ps_no_control, GP.ord, axes = 1:2,color="Group") +   #Change axes to 2:3 3:4 4:5 and see how does other demensions looks like
+beta.treatment = phyloseq::plot_ordination(ps_no_control, GP.ord, axes = 1:2,color="Group") +   #Change axes to 2:3 3:4 4:5 and see how the other dimensions look
+
   #Change 'color' to litter or another column name to 
   stat_ellipse(geom = "polygon", level = 0.95, fill = NA, size = 1) +              
   scale_color_jco() +
@@ -411,7 +366,8 @@ beta.treatment = phyloseq::plot_ordination(ps_no_control, GP.ord, axes = 1:2,col
 
 beta.treatment
 ```
-# Abundant barplots
+
+# Abundance barplot
 ## Individual sample barplots.
 ```{r, eval = T, include = T, echo = F, message = F}
 
@@ -465,7 +421,7 @@ barplot.all.samples
 ```
 
 
-## NEC
+# NEC incidence
 ```{r}
 library(dplyr)
 
@@ -497,10 +453,12 @@ Control_scores <- NEC_df$NEC_score[!grepl("FFT", NEC_df$Treatment)]
 # Perform a t-test
 t.test(FFT_scores, Control_scores)
 
+ggsave()
 
 
 ```
 
+# Leukocytes
 ```{r}
 library(dplyr)
 library(ggplot2)
@@ -537,13 +495,13 @@ print(ttest)
 
 ```
 
-
+## Hematology plots
 ```{r}
-
 library(ggplot2)
 library(dplyr)
+library(ggpubr)
 
-meta_cleaned <- read.table("Meta_cleaned.txt", sep="\t", header=TRUE)
+meta_cleaned <- read.table("Meta_cleaned.txt", sep = "\t", header = TRUE)
 
 # Add new column 'NEC_incidence' with blank values
 meta_cleaned <- cbind(meta_cleaned[, 1:4], NEC_incidence = "", meta_cleaned[, 5:ncol(meta_cleaned)])
@@ -564,19 +522,42 @@ count_data <- filtered_meta %>%
   group_by(Group) %>%
   summarize(count = n())
 
-# Create scatter plots with different shapes for NEC and non-NEC points
-plot_neutrophiles <- ggplot(filtered_meta, aes(x = Group, y = Neutrophiles, color = Group)) +
-  geom_boxplot(show.legend = F) +
-  geom_jitter() +
-  annotate(
-    "text",
-    x = count_data$Group, y = max(filtered_meta$Neutrophiles),
+# Define individual colors for each group
+group_colors <- c("cornflowerblue", "tomato")
+
+
+## Neutrophils
+# Perform t-test
+ttest_neutrophiles <- t.test(Neutrophiles ~ Group, data = filtered_meta)
+
+# Extract the p-value from the t-test result
+pvalue_neutrophiles <- format(ttest_neutrophiles$p.value, digits = 3)
+
+# Make a plot
+plot_neutrophiles <- ggplot(filtered_meta, aes(x = Group, y = Neutrophiles, fill = Group)) +
+  geom_boxplot(alpha = 0.8, show.legend = FALSE) +
+  geom_jitter(aes(color = Group), width = 0.2, height = 0, show.legend = FALSE) +
+  annotate("text",
+    x = count_data$Group,
+    y = annotation_y_neutrophiles,
     label = paste("n =", count_data$count),
-    vjust = -1
-  ) +
-  labs(x = "Group", y = "Neutrophiles", color = "Group", shape = "NEC Incidence") +
-  #ggtitle("Boxplot with Scatter Plot of Neutrophiles by Group") +
-  theme_minimal()
+    vjust = 1) +
+  scale_fill_manual(values = group_colors) +
+  scale_color_manual(values = c("steelblue", "firebrick3")) +
+  ggtitle("Neutrophils") +
+  labs(x = "", y = "", fill = "Group", color = "Group", shape = "NEC Incidence") +
+  theme_minimal() +
+  theme(legend.position = "none",
+    plot.margin = margin(10, 10, 30, 10, unit = "pt"),
+    text = element_text(size = 12, face = "bold")) +
+  geom_text(x = mean(as.numeric(as.factor(filtered_meta$Group))),
+    y = min(filtered_meta$Neutrophiles),
+    label = paste("t-test p =", pvalue_neutrophiles),
+    color = "red",
+    size = 4,
+    hjust = 0.5,
+    vjust = -0.5) +
+  coord_cartesian(clip = "off")
 
 # Add labels to the scatter points
 plot_neutrophiles <- plot_neutrophiles +
@@ -585,18 +566,38 @@ plot_neutrophiles <- plot_neutrophiles +
        legend = list(title = "Legend", 
                      labels = c("No NEC: Triangles", "NEC: Circles")))
 
-plot_lymphocytes <- ggplot(filtered_meta, aes(x = Group, y = Lymphocytes, color = Group)) +
-  geom_boxplot(show.legend = F) +
-  geom_jitter() +
-  annotate(
-    "text",
-    x = count_data$Group, y = max(filtered_meta$Lymphocytes),
+
+## Lymphocytes
+# Perform a t-test
+ttest_lymphocytes <- t.test(Lymphocytes ~ Group, data = filtered_meta)
+
+# Extract the p-value from the t-test result
+pvalue_lymphocytes <- format(ttest_lymphocytes$p.value, digits = 3)
+
+# Make a plot
+plot_lymphocytes <- ggplot(filtered_meta, aes(x = Group, y = Lymphocytes, fill = Group)) +
+  geom_boxplot(alpha = 0.8, show.legend = FALSE) +
+  geom_jitter(aes(color = Group), width = 0.2, height = 0, show.legend = FALSE) +
+  annotate("text",
+    x = count_data$Group,
+    y = annotation_y_lymphocytes,
     label = paste("n =", count_data$count),
-    vjust = -1
-  ) +
-  labs(x = "Group", y = "Lymphocytes", color = "Group", shape = "NEC Incidence") +
-  #ggtitle("Boxplot with Scatter Plot of Lymphocytes by Group") +
-  theme_minimal()
+    vjust = 1) +
+  scale_fill_manual(values = group_colors) +
+  scale_color_manual(values = c("steelblue", "firebrick3")) +
+  ggtitle("Lymphocytes") +
+  labs(x = "", y = "", fill = "Group", color = "Group", shape = "NEC Incidence") +
+  theme_minimal() +
+  theme(legend.position = "none",
+    plot.margin = margin(10, 10, 30, 10, unit = "pt"),
+    text = element_text(size = 12, face = "bold")) +
+  geom_text(x = mean(as.numeric(as.factor(filtered_meta$Group))), y = min(filtered_meta$Lymphocytes),
+    label = paste("t-test p =", pvalue_lymphocytes),
+    color = "red",
+    size = 4,
+    hjust = 0.5,
+    vjust = -0.5) +
+  coord_cartesian(clip = "off")
 
 # Add labels to the scatter points
 plot_lymphocytes <- plot_lymphocytes +
@@ -605,18 +606,37 @@ plot_lymphocytes <- plot_lymphocytes +
        legend = list(title = "Legend", 
                      labels = c("No NEC: Triangles", "NEC: Circles")))
 
-plot_monocytes <- ggplot(filtered_meta, aes(x = Group, y = Monocytes, color = Group)) +
-  geom_boxplot() +
-  geom_jitter() +
-  annotate(
-    "text",
-    x = count_data$Group, y = max(filtered_meta$Monocytes),
+
+## Monocytes
+# Perform a t-test
+ttest_monocytes <- t.test(Monocytes ~ Group, data = filtered_meta)
+
+# Extract the p-value from the t-test result
+pvalue_monocytes <- format(ttest_monocytes$p.value, digits = 3)
+
+# Make a plot
+plot_monocytes <- ggplot(filtered_meta, aes(x = Group, y = Monocytes, fill = Group)) +
+  geom_boxplot(alpha = 0.8) +
+  geom_jitter(aes(color = Group), width = 0.2, height = 0) +
+  annotate("text",
+    x = count_data$Group,
+    y = annotation_y,
     label = paste("n =", count_data$count),
-    vjust = -1
-  ) +
-  labs(x = "Group", y = "Monocytes", color = "Group", shape = "NEC Incidence") +
-  #ggtitle("Boxplot with Scatter Plot of Monocytes by Group") +
-  theme_minimal()
+    vjust = 1) +
+  scale_fill_manual(values = group_colors) +
+  scale_color_manual(values = c("steelblue", "firebrick3")) +
+  ggtitle("Monocytes") +
+  labs(x = "", y = "", fill = "Group", color = "Group", shape = "NEC Incidence") +
+  theme_minimal() +
+  theme(plot.margin = margin(10, 10, 30, 10, unit = "pt"),
+    text = element_text(size = 12, face = "bold")) +
+  geom_text(x = mean(as.numeric(as.factor(filtered_meta$Group))),y = max(filtered_meta$Monocytes),
+    label = paste("t-test p =", pvalue_monocytes),
+    color = "red",
+    size = 4,
+    hjust = 0.5,
+    vjust = -0.5) +
+  coord_cartesian(clip = "off")
 
 # Add labels to the scatter points
 plot_monocytes <- plot_monocytes +
@@ -625,144 +645,16 @@ plot_monocytes <- plot_monocytes +
        legend = list(title = "Legend", 
                      labels = c("No NEC: Triangles", "NEC: Circles")))
 
-# Display the updated plots
-plot_neutrophiles
-plot_lymphocytes
-plot_monocytes
+# Patchwork
+# Combine the plots using patchwork
+plot_neutrophiles + plot_lymphocytes + plot_monocytes +
+  patchwork::plot_layout(widths = 50, heights = 10) +
+  patchwork::plot_annotation("Leukocyte concentration from Hematocytic data",
+    theme = theme(text = element_text(size = 15, face = "bold"),
+                  legend.text = element_text(size = 100)))
 
-
-plot_neutrophiles + plot_lymphocytes + plot_monocytes + patchwork::plot_layout(widths = 50, heights = 10) + patchwork::plot_annotation("")
-
-```
-
-
-
-
-###ændres til boxplot + sample size for FFT og Control
-```{r}
-# Filter out rows with NA values in the specified columns
-filtered_meta <- meta_cleaned %>%
-  filter(!is.na(Lac.Mal.Ratio))
-
-lacmal_removed <- filtered_meta[-1, ]
-
-# Convert Lac.Mal.Ratio column to numeric
-lacmal_removed$Lac.Mal.Ratio <- as.numeric(lacmal_removed$Lac.Mal.Ratio)
-
-# Calculate average and median scores per group
-summary_data <- lacmal_removed %>%
-  group_by(Group) %>%
-  summarize(avg_score = mean(Lac.Mal.Ratio), med_score = median(Lac.Mal.Ratio))
-
-# Create bar plot of average scores
-bar_plot <- ggplot(summary_data, aes(x = Group, y = avg_score, fill = Group)) +
-  geom_bar(stat = "identity") +
-  labs(x = "Group", y = "Average Score", fill = "Group") +
-  ggtitle("Bar Plot of Average Scores") +
-  theme_minimal()
-
-# Add scatter points with different shapes for NEC and non-NEC points
-scatter_plot <- bar_plot +
-  geom_jitter(data = lacmal_removed %>% filter(NEC_incidence == "NEC"), 
-              aes(x = Group, y = Lac.Mal.Ratio, shape = NEC_incidence), 
-              width = 0.2, height = 0, color = "grey", size = 2) +
-  geom_jitter(data = lacmal_removed %>% filter(NEC_incidence != "NEC"), 
-              aes(x = Group, y = Lac.Mal.Ratio, shape = NEC_incidence), 
-              width = 0.2, height = 0, color = "black", size = 2) +
-  scale_shape_manual(values = c(16, 17), labels = c("No NEC", "NEC")) +
-  labs(shape = "NEC Incidence",
-       legend = list(title = "Legend", 
-                     labels = c("No NEC: Triangles", "NEC: Circles")))
-
-# Print the summary data
-print(summary_data)
-
-# Print the combined plot
-print(scatter_plot)
-```
-
-
-
-#Slettes måske
-```{r}
-library(dplyr)
-library(ggplot2)
-
-NEC_leuk_df <- read.table("NEC_and_Leuk.txt", sep="\t", header=TRUE)
-NEC_leuk_df <- na.omit(NEC_leuk_df)
-
-NEC_grouped <- NEC_leuk_df %>%
-  group_by(NEC_score) %>%
-  summarise(average_leuk = mean(Total.leukocytes))
-
-ggplot(NEC_leuk_df, aes(x = factor(NEC_score), y = Total.leukocytes, fill = factor(NEC_score))) +
-  geom_boxplot() +
-  geom_jitter(width = 0.2, height = 0, color = "black", alpha = 1) +
-  scale_fill_manual(values = c("steelblue", "steelblue", "firebrick3", "firebrick3")) +
-  labs(x = "NEC Score", y = "Total Leukocytes", fill = "NEC Score") +
-  ggtitle("Total Leukocytes by NEC Score")
-
-
-```
-
-```{r}
-library(ggplot2)
-library(ggbeeswarm)
-library(lmerTest)
-install.packages("lsmeans")
-library(lsmeans)
-
-meta_clean <- read.table("Meta_clean.txt", sep="\t", header=TRUE)
-
-data_tab <- meta_clean(Treatment$NEC_score)
-data_tab <- subset(data_tab, select = c(ID, Group, NEC_max, Litter))
-data_tab_f <- NEC_score_df[data_tab$ID %in% mapping$FMT_ID,]
-data_tab_f$Group <- factor(data_tab_f$Treatment, levels = c("CON", "NEW", "OLD"), labels = c("CON", "FMT1", "FMT2"))
-data_tab_long <- reshape2::melt(data_tab_f, id.vars = c("ID", "Group", "Litter"))
-
-lm_fun <- function(data_tab_long) {
-  lmer.fit <- lmer(value ~ Group + (1|Litter), data = data_tab_long) 
-  sum_tukey <- lsmeans(lmer.fit, pairwise ~ Group, adjust = "tukey")
-  tab <- as.data.frame(sum_tukey$contrasts)
-  
-  groups <- setDT(tstrsplit(as.character(tab$contrast), " - ", fixed = TRUE))[]
-  
-  stat.test <- tibble(group1 = groups$V1, group2 = groups$V2, p.adj = tab$p.value)
-  stat.test$p.adj.signif <- case_when(stat.test$p.adj >= 0.05 ~ NA,
-                                      stat.test$p.adj < 0.05 ~ "*",
-                                      stat.test$p.adj < 0.01 ~ "**",
-                                      stat.test$p.adj < 0.001 ~ "***")
-  return(stat.test)
-}
-
-stat.test <- lm_fun(data_tab_long)
-
-stat.test <- stat.test %>%
-  filter(p.adj < 0.05) %>%
- 
-
-NEC_score_df$NEC_score <- factor(NEC_score_df$NEC_score, levels = c(1:6))
-
-p_NECseverity <- ggplot(NEC_score_df, aes(x = Treatment, y = NEC_score)) +
-  geom_violin(aes(fill = Treatment)) +
-  geom_beeswarm(cex = 2, size = 2, aes(color = NEC_score)) +
-  geom_hline(yintercept = 3.5, linetype = "dashed", color = "black") +
-  scale_color_manual(values = c("black", "gray", "black", "gray", "black", "gray")) +
-  scale_fill_manual(values = c("#0072B2", "#D55E00", "#F0E442", "#009E73")) +
-  labs(x = "", y = "NEC max scores", title = "") +
-  scale_y_discrete(breaks = seq(1, 6, 1)) +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, family = "Arial", size = 12, face = "bold"),
-        legend.text = element_text(family = "Arial", size = 10),
-        strip.background = element_blank(),
-        strip.placement = "outside",
-        strip.text = element_text(family = "Arial", size = 10, vjust = 1),
-        axis.text = element_text(family = 'Arial', size = 10, color = "black"),
-        axis.ticks.x = element_blank(),
-        panel.grid = element_blank())
-
-p_NECseverity
-
+# Save the combined plots using ggsave
+ggsave("./outputs/banging_hemato.jpeg", device = "jpeg", dpi = 300, height = 10, width = 20)
 
 
 ```
