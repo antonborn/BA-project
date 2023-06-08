@@ -659,7 +659,7 @@ list("Actinobacteriota" = "aquamarine4",
      "Proteobacteria" = "darkgoldenrod3")
 #Agglomeration
 phyl_don <- gloomer(rar_don, "Phylum", NArm = TRUE) 
-pooled_phyl_don = subset_samples(phyl_don, Extract_name == "Pooled35611")
+pooled_phyl_don = subset_samples(phyl_don, Extract_name == "Pooled")
 phyl_don@tax_table
 pooled_phyl_don = transform_sample_counts(pooled_phyl_don, fun = function(x){x/sum(x)*100}) 
 
@@ -700,7 +700,7 @@ print(colors)
 fam_rec <- gloomer(rar_rec, "Family", NArm = TRUE) 
 
 fam_don <- gloomer(rar_don, "Family", NArm = TRUE) 
-pooled_fam_don = subset_samples(fam_don, Extract_name == "Pooled35611")
+pooled_fam_don = subset_samples(fam_don, Extract_name == "Pooled")
 pooled_fam_don@tax_table
 pooled_fam_don = transform_sample_counts(pooled_fam_don, fun = function(x){x/sum(x)*100})
 
