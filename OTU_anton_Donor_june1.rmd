@@ -1,0 +1,1054 @@
+---
+title: "new"
+output: html_document
+date: "2023-05-26"
+---
+
+```{r setup, include=FALSE}
+p1 <- c("tidyverse", "vegan", "BiocManager")
+p2 <- c("phyloseq", "ANCOMBC", "DESeq2", "ComplexHeatmap","MicrobiotaProcess","ggsci","directlabels","ggpubr")
+load_package <- function(p) {
+  if (!requireNamespace(p, quietly = TRUE)) {
+    ifelse(p %in% p1, 
+           install.packages(p, repos = "http://cran.us.r-project.org/"), 
+           BiocManager::install(p))
+  }
+  library(p, character.only = TRUE, quietly = TRUE)
+}
+invisible(lapply(c(p1,p2), load_package))
+
+
+```
+
+
+```{r, data}
+#donor
+tax_don = read.table("/Users/antonborn/Desktop/ba kodning/taxonomy_donor.txt", sep = "\t", header = T)
+
+
+
+for(i in 2:ncol(tax_don)){
+  
+  tax_don[, i] = str_replace(tax_don[,i], ".*_", replacement = "")
+  
+}
+
+
+colnames(tax_don)[1] <- "otu"
+tax_don <- column_to_rownames(tax_don, "otu")
+
+otu_don = read_tsv("/Users/antonborn/Desktop/ba kodning/otu_donor.txt") 
+colnames(otu_don)[1] <- "otu"
+otu_don <- column_to_rownames(otu_don, "otu")
+#recipient
+
+
+tax_rec = read_tsv("/Users/antonborn/Desktop/ba kodning/taxonomy_recepient.txt") %>% as.matrix()
+
+
+
+for(i in 2:ncol(tax_rec)){
+  
+  tax_rec[, i] = str_replace(tax_rec[,i], ".*_", replacement = "")
+  
+}
+
+colnames(tax_rec)[1] <- "otu"
+
+rownames(tax_rec) <- tax_rec[,1]
+tax_rec = tax_rec[, -1]
+
+otu_rec = read_tsv("/Users/antonborn/Desktop/ba kodning/otu_recepient.txt")
+colnames(otu_rec)[1] <- "otu"
+otu_rec <- column_to_rownames(otu_rec, "otu")
+
+#phyloseqs
+tax_don = as(tax_don, "matrix")
+
+ps_don <- phyloseq(otu_table(as.matrix(otu_don), taxa_are_rows = T), phyloseq::tax_table(tax_don))
+
+tax_rec = as(tax_rec, "matrix")
+colnames(tax_rec)[2] <- "Phylum"
+ps_rec <- phyloseq(otu_table(as.matrix(otu_rec), taxa_are_rows = T), phyloseq::tax_table(tax_rec))
+
+```
+
+# Importing the metadata
+```{r, metadata}
+
+meta_don = read_tsv("./metadata_donor.txt") %>% select(1, 3, 5, 10:11)
+
+meta_don = column_to_rownames(meta_don, "sample_id")
+
+colnames(meta_don)[4] <- "vol_pool"
+
+
+meta_rec = read_tsv("./metadata_recipient.txt", col_names = T ) 
+
+meta_rec = column_to_rownames(meta_rec, "tax_id")
+meta_rec = ifelse(meta_rec$Group %in% c("Control1", "Control2"), "Control", "FFT")
+
+sample_data(ps_don) <- sample_data(meta_don) 
+sample_data(ps_rec) <- sample_data(meta_rec) 
+
+
+```
+
+
+```{r, preprocessing, prevalance}
+library(phyloseq)
+#remove non-classified phyla
+ps_don = subset_taxa(ps_don, !Phylum %in% c("", " ", "unclassified", "unassigned", "NA", "Unassigned" ))
+
+# filtering based on prevalence 
+prevdf <- apply(otu_table(ps_don),ifelse(taxa_are_rows(ps_don), 1, 2), function(x){sum(x>0)})
+prevdf <-data.frame(ASVprev = prevdf,           #Number of the samples containing a given ASV; this shows how many samples each ASV occured.
+                   TaxaAbund = taxa_sums(ps_don),  #The abundance of each ASV across all samples. 
+                   phyloseq::tax_table(ps_don))
+head(prevdf)
+#Find out the phyla that are of mostly low-prevalence features by computing the total and average prev of features in each Phylum
+junkies = plyr::ddply(prevdf, "Phylum", function(df){cbind(means = round(mean(df$ASVprev), 2), sums = round(sum(df$ASVprev),
+                                         2))}) %>% mutate(sanity = ifelse(means == sums, "TRUE", "FALSE")) %>% filter(sanity == TRUE) %>% pull(Phylum)
+
+ps_don = subset_taxa(ps_don, !Phylum %in% junkies)
+
+```
+
+
+
+```{r, preprocessing, abundance}
+# Filtering based on abundance 
+
+#A function to find singletones. You need to be careful about this step!
+out.ASV = function(phyloseq, threshold =1, binwidth = 0.01) {
+  
+#Loading necessary pkgs      
+  pacman::p_load(glue, tidyverse, reshape2, ggrepel, S4Vectors) # nolint
+#This function requires phyloseq, tidyverse and glue packages to be loaded. 
+    if (sum(colSums(otu_table(phyloseq)))/ncol(otu_table(phyloseq)) == 100 ) {#making the relative abundance table
+                    rel_abund = as(t(otu_table(phyloseq)), "matrix")
+    } else if (sum(colSums(otu_table(phyloseq)))/ncol(otu_table(phyloseq)) == 1) {
+                    rel_abund = as(t(otu_table(phyloseq)), "matrix")
+                    } else {
+                    rel_abund = as(t(apply(otu_table(phyloseq), 
+                    ifelse(taxa_are_rows(phyloseq), 1,2), 
+                    function(x) x/sum(x))), "matrix")  
+                    } 
+                      
+                      
+                      names.single = apply(rel_abund, 1, function(x){ifelse(x == threshold, TRUE, ifelse(x == sum(x),
+                      TRUE, FALSE))}) %>% reshape2::melt() %>% filter(value == TRUE) %>% dplyr::select(2) %>%
+                      pull   %>% as.vector()
+                      
+                        
+                        if (length(names.single) == 0 ) {
+                        print(glue("WOW! {length(names.single)} singletones detected in this dataset"))
+                        qplot.noSing = qplot(rel_abund, geom = "histogram", binwidth = binwidth, 
+                        show.legend = F, main = "Frequency count of relative abundance, no singletones detected") +
+                        xlab ("Relative abundance in samples") + ylab("Frequency") + theme_bw()
+                            
+                        
+                        return(structure(list(qplot.noSing)))
+                            
+                        } else { 
+                             
+                       single.ASV = rel_abund[rownames(rel_abund) %in% names.single,]
+                       single.ASV[single.ASV == 0] <- NA # A separate dataset for annotation of singletones on the barplot
+                            
+                       qplot.withSing = qplot(rel_abund, geom = "histogram", binwidth = binwidth, 
+                       main = "Frequency count of relative abundance with singletones") +
+                       geom_bar(aes(single.ASV), fill = "red",  color = NA, width = binwidth)+
+                       xlab ("Relative abundance in samples") + ylab("Frequency") + 
+                       geom_label_repel(aes(x = 1, y =length(rel_abund)/5), 
+                       label.padding =  unit(0.55, "lines"), 
+                       label = glue("{length(names.single)}\n Singletones"), color = "black") + theme_bw()
+                            
+                       qplot.rmSing = qplot(rel_abund[!rownames(rel_abund) %in% names.single, ], geom = "histogram",
+                       binwidth = binwidth, main = "Frequency count of relative abundance without singletones") +
+                       xlab ("Relative abundance in samples") + ylab("Frequency")+ theme_bw()
+                            
+                       print(glue('Oh no..! {length(names.single)} singletones detected in the dataset'))
+                       return(structure(list(qplot.withSing, qplot.rmSing, unlist(names.single))) )
+                    
+                        }                        
+    
+                             
+        }
+                        
+single.test = out.ASV(phyloseq = ps_rec, threshold = 1, binwidth = 0.1)
+singletones = single.test[[3]] #here you can extract the names of the singletones
+
+single.test[[1]]#to show the plot with singletones
+single.test[[2]]#to show the plot without singletones
+
+
+
+look <- list()
+
+for (i in singletones){
+  
+  
+  look[[i]] = ps_rec@otu_table[rownames(ps_rec@otu_table) == i,] 
+  
+}
+
+#Now you can remove the singletones from your ps file as follows:
+ps_rec_cl = subset_taxa(ps_rec, !taxa_names(ps_rec)%in% singletones)
+ps_rec_noSingle = subset_taxa(ps_rec, !taxa_names(ps_rec)%in% singletones)
+
+```
+
+
+
+
+
+```{r, removing mock and negative samples}
+
+ps_rec_cl = phyloseq::subset_samples(ps_rec_cl, !Group %in% c("N(egative)",  "P(ositive)"))
+
+ps_rec_noSingle = phyloseq::subset_samples(ps_rec_noSingle, !Group %in% c("N(egative)",  "P(ositive)"))
+
+
+```
+
+
+```{r, distribution}
+
+library(ggplot2)
+
+count_df <- ps_rec_cl@otu_table
+#non-normalized
+qplot(rowSums(count_df)) + theme_bw()
+
+#log-transformed
+qplot(log(rowSums(count_df))) + theme_bw()+
+  ylab("Counts per sample") +
+  xlab("log-transofmed data")
+
+#Donor
+count_df_don = ps_don@otu_table
+qplot(rowSums(count_df_don)) + theme_bw()
+
+#log-transformed
+qplot(log(rowSums(count_df_don))) + theme_bw()+
+  ylab("Counts per sample") +
+  xlab("log-transofmed data")
+
+
+```
+
+```{r, transformation}
+library(DESeq2)
+phyloseq_to_deseq2()
+#Donor
+count_df_don = as(count_df_don, "matrix")
+vst_count_don = varianceStabilizingTransformation(object = count_df_don, blind = FALSE)
+qplot(rowSums(vst_count_don))
+
+otu_table(ps_don) <- otu_table(vst_count_don, taxa_are_rows  = TRUE)
+
+#Recipient
+
+count_df_rec = as(count_df, "matrix")
+vst_count_rec = varianceStabilizingTransformation(object = count_df_rec, blind = FALSE)
+qplot(rowSums(vst_count_rec))
+
+otu_table(ps_rec_cl) <- otu_table(vst_count_rec, taxa_are_rows  = TRUE)
+
+```
+
+
+# Alpha diversity
+```{r}
+#Richness
+##Donor
+ps_don_orig <- ps_don
+otu_table(ps_don_orig) <- otu_table(otu_don, taxa_are_rows = TRUE)
+
+chao_don = estimate_richness(ps_don_orig, split = TRUE, "Chao1")
+
+
+## Recipient
+chao_rec = estimate_richness(ps_rec_noSingle, split = TRUE, "Chao1")
+
+
+#evennes: Shannon
+## Donor 
+library("MicrobiotaProcess")
+rar_curve_don <- ggrarecurve(obj = ps_don_orig, 
+                     indexNames = c("Observe", "Shannon"),
+                     chunks = 400, 
+                     theme(legend.spacing.y = unit(0.02, "cm"),
+                           legend.text = element_text(size = 6)), show.legend=F) +
+  geom_vline(xintercept = 20000, color = "red", lty = 2, alpha = 0.6) + theme_bw() + ggtitle("Rarification curve for Donor Material")
+
+rar_curve_don
+
+rar_don = rarefy_even_depth(ps_don_orig, replace = FALSE, sample.size = 20000)
+shan_don = estimate_richness(rar_don, split = TRUE, "shannon")
+
+#Recipient
+rar_curve_rec <- ggrarecurve(obj = ps_rec_noSingle, 
+                     indexNames = c("Observe", "Shannon"),
+                     chunks = 400, 
+                     theme(legend.spacing.y = unit(0.02, "cm"),
+                           legend.text = element_text(size = 6)), show.legend=F) +
+  geom_vline(xintercept = 10000, color = "red", lty =2, alpha = 0.6) + theme_bw() + ggtitle("Rarification curve for Recipients")
+
+rar_curve_rec
+
+rar_rec = rarefy_even_depth(ps_rec_noSingle, replace = FALSE, sample.size = 10000)
+shan_rec = estimate_richness(rar_rec, split = TRUE, "shannon")
+
+#BRK163 BRK174 BRK187 were removed by rearefication of 10000 du to to low reads.
+
+#patchwork
+
+rar_curve_don + rar_curve_rec + plot_annotation("Rarification curves from the all samples","", "3 samples were removed due to shallow sequencing depth which were BRK163, BRK174 and BRK187")
+
+ggsave("./outputs/Rare_curves.jpeg", device = "jpeg", width =8 , height =5 , dpi = 300)
+
+
+
+```
+
+
+```{r, Alpha diveristy plots}
+alpha_don <- data.frame(Chao1 = chao_don$Chao1, Shannon = shan_don$Shannon, row.names = rownames(chao_don))
+
+long_alpha = reshape2::melt(alpha_don) 
+  
+p_chao = ggplot() +
+  geom_violin(data = subset(long_alpha, variable=="Chao1"), aes(x = variable, y = value), trim = F, fill = "deepskyblue") + 
+  geom_boxplot(data = subset(long_alpha, variable=="Chao1"), aes(x = variable, y = value), width = 0.2) +
+  geom_jitter(data = subset(long_alpha, variable=="Chao1"), aes(x = variable, y = value),  color = "black") +
+  ylab("Alpha diversity") + 
+  theme_bw() + facet_wrap(~ variable) +
+  xlab("") + theme(axis.text.x.bottom = element_blank(), strip.text = element_text( face = "bold", size = 16, color ="white"), strip.background = element_rect(fill = "darkmagenta", color = "darkmagenta"))
+
+
+p_shan = ggplot() +
+  geom_violin(data = subset(long_alpha, variable=="Shannon"), aes(x = variable, y = value), trim = F, fill = "forestgreen") + 
+  geom_boxplot(data = subset(long_alpha, variable=="Shannon"), aes(x = variable, y = value), width = 0.2) +
+  geom_jitter(data = subset(long_alpha, variable=="Shannon"), aes(x = variable, y = value),  color = "black")+
+  ylab("") + 
+  theme_bw() + facet_wrap(~ variable) +
+  xlab("") + theme(axis.text.x.bottom = element_blank(), strip.text = element_text( face = "bold", size = 16, color ="white"), strip.background = element_rect(fill = "darkmagenta", color = "darkmagenta"))
+
+library(patchwork)
+
+p_chao + p_shan + patchwork::plot_annotation("Alpha diversity Donor", 
+                                             subtitle = "Aplha diversity from all donor material")
+ggsave("./outputs/Alpha_div_Donors.jpeg", device = "jpeg", width = , height = 10, dpi = 300)
+
+
+```
+
+```{r, alpha diversity recipient}
+library(ggpubr)
+res_met = sample_data(rar_rec)
+
+
+alpha_rec = data.frame(Chao1 = chao_rec$Chao1[rownames(chao_rec) %in% rownames(shan_rec)], Shannon = shan_rec$Shannon, row.names = rownames(chao_rec[rownames(chao_rec) %in% rownames(shan_rec),]), treat = res_met$Group ) 
+
+treat <- res_met$Group
+
+long_alpha_rec = reshape2::melt(alpha_rec)
+long_alpha_rec$treat <- factor(long_alpha_rec$treat, levels = c("Control", "FFT"))
+
+chao_rec = long_alpha_rec %>% filter(variable == "Chao1") %>% 
+  ggplot() +
+  geom_violin(aes(x = treat, y = value, fill = treat), trim = F, show.legend = F) + 
+  geom_jitter(aes(x = treat, y = value)) + 
+  labs(fill = "Treatment")+ ylab("Alpha diversity" ) +
+  geom_boxplot(aes(x = treat, y = value), width= 0.1) +
+  facet_wrap(~ variable) + stat_compare_means(aes(x = treat, y = value), method = "t.test", label.y = 10, label.x = 0.5, color = "red") +
+  theme_bw() + facet_wrap(~ variable) +
+  xlab("") + theme(axis.text.x.bottom = element_blank(), strip.text = element_text( face = "bold", size = 16, color ="white"), strip.background = element_rect(fill = "darkmagenta", color = "darkmagenta"))
+
+
+shan_rec = long_alpha_rec %>% filter(variable == "Shannon") %>% 
+  ggplot() +
+  geom_violin(aes(x = treat, y = value, fill = treat), trim = F) + 
+  geom_jitter(aes(x = treat, y = value)) +
+  geom_boxplot(aes(x = treat, y = value), width= 0.1) +
+  facet_wrap(~ variable) + stat_compare_means(aes(x = treat, y = value), method = "t.test", label.y = 0.05, label.x = 0.5, color = "red") +
+  theme_bw() + facet_wrap(~ variable) +
+  xlab("") + theme(axis.text.x.bottom = element_blank(), strip.text = element_text( face = "bold", size = 16, color ="white"), strip.background = element_rect(fill = "darkmagenta", color = "darkmagenta"))
+
+#patchwork
+chao_rec + shan_rec + patchwork::plot_annotation("Alpha diversity Recipients", 
+                                             subtitle = "Aplha diversity from recipents in each treatment group")
+ggsave("./outputs/Alpha_div_recipients.jpeg", device = "jpeg", width = , height = 10, dpi = 300)
+
+```
+## Beta diversity
+
+```{r, Beta diversity between treatment groups}
+#script from https://github.com/farhadm1990/16S-rRNA-amplicon/blob/main/R_steps.md
+
+ps.log <- transform_sample_counts(ps_rec_noSingle, function(x) {log(1+x)})
+ps_vst.temp = varianceStabilizingTransformation(as(ps_rec_noSingle@otu_table, "matrix"), blind = FALSE)
+ps_vst = ps_rec_noSingle 
+ps_vst@otu_table <- otu_table(ps_vst.temp, taxa_are_rows = TRUE)
+
+#Here is a list of all distance metrics
+dist_methods <- unlist(distanceMethodList)
+print(dist_methods)
+```
+
+
+```{r, plots: PCoA}
+#Bray PCoA: ps_vst
+
+bray.pcoa = ordinate(ps.log , method="PCoA", distance = "bray")
+
+
+evals_bray<-bray.pcoa$values$Eigenvalues
+
+
+
+
+ bray.pcoa.p = plot_ordination(ps.log, bray.pcoa, axes =  c(1,2 ), 
+ color = 'Group', shape = "Litter",
+title = "Bray-Curtis PCoA plot, vst data")+ 
+geom_point(size = 5) + 
+geom_vline( xintercept = 0, lty = 2, 
+color = alpha("black", alpha = 0.5))+ 
+geom_hline(yintercept = 0, lty = 2, color = alpha(col = "black", 0.5)) +
+  labs(col="Treatment", shape = "Litter")+
+  coord_fixed(sqrt(evals_bray[2]/evals_bray[1]))+#+stat_ellipse()
+  labs(x = sprintf("PCoA1 [%s%%]", round(evals_bray/sum(evals_bray)*100,1)[1]),
+       y = sprintf("PCoA2 [%s%%]", round(evals_bray/sum(evals_bray)*100, 2)[2])) +
+scale_color_manual(values = c("deeppink1", "deepskyblue"))+
+theme_bw()
+
+
+ps.log@sam_data
+
+```
+
+```{r, Beta diversity using jaccard}
+jacc.pcoa = ordinate(ps.log , method="PCoA", distance = "jaccard")
+
+evals_jacc<-jacc.pcoa$values$Eigenvalues
+
+jacc.pcoa.p <- plot_ordination(ps.log, jacc.pcoa, axes = c(1, 2), color = 'Group', shape = "Litter", title = "Jaccard PCoA plot, vst data") +
+  geom_point(size = 5) +
+  geom_vline(xintercept = 0, lty = 2, color = alpha("black", alpha = 0.5)) +
+  geom_hline(yintercept = 0, lty = 2, color = alpha(col = "black", 0.5)) +
+  labs(col = "Treatment", shape = "Litter") +
+  coord_fixed(sqrt(evals_jacc[2] / evals_jacc[1])) +
+  labs(x = sprintf("PCoA1 [%s%%]", round(evals_jacc / sum(evals_jacc) * 100, 1)[1]),
+       y = sprintf("PCoA2 [%s%%]", round(evals_jacc / sum(evals_jacc) * 100, 2)[2])) +
+  scale_color_manual(values = c("deeppink1", "deepskyblue"), guide = "none") +
+  scale_shape_manual(values = c(16, 17), guide = "none") +
+  theme_bw()
+
+
+
+
+```
+
+```{r}
+#patchwork Beta diversity plots
+jacc.pcoa.p + bray.pcoa.p + plot_annotation("Beta diversity between treatment groups in recipients","", caption_rda)
+
+ggsave("./outputs/Banging_beta_div_plot.jpeg", device = "jpeg", dpi = 500, width = 10, height = 7)
+```
+
+```{r, dbrda}
+library(vegan)
+
+df = data.frame(sample_data(ps.log))
+
+df$Litter <- as.factor(df$Litter)
+df$Group <- as.factor(df$Group)
+
+xtabs(~   df$Litter + df$PigID)
+model.matrix(Litter, Group, data = df)
+
+bray_dist = vegdist(t(otu_table(ps.log)), method = "bray")
+
+#dbrda_ml = dbrda(bray_dist ~ Group + Condition(Litter), data = df, distance = "bray")
+rda_ml = rda(t(otu_table(ps.log)) ~ Group + Condition(Litter), data = df)
+
+
+
+h = with(data = df,
+  how(within = Within(type = "free"),
+  plots = Plots(strata = Litter, type = "none"),
+  nperm = 999))
+
+#permutest(dbrda_ml, permutations = h, by = "terms")
+per_rda = permutest(rda_ml, permutations = h, by = "terms")
+
+
+vegan::scores(dbrda_ml, display = "site")
+
+
+score.site = vegan::scores(rda_ml, display = "sites") %>% as.data.frame
+score.centroid = vegan::scores(rda_ml, display = "cn") %>% as.data.frame
+rownames(score.centroid) <- factor(sample_data(ps.log)$Group) %>% levels
+
+eig.vals = rda_ml$CCA$eig
+inertia.total = rda_ml$tot.chi
+
+
+caption_rda <- glue("Rda test statistics for treatment effect: P-value: 0.268 F: 1.12  R2: 2.30%")
+```
+
+```{r, plot:NMDS}
+#Bray NMDS
+bray.nmds=ordinate(ps.log, method="NMDS", distance = "bray")
+bray.stress = stressplot(bray.nmds)#in this dataset, R squared shows that the nMDS is perfectly able to capture variation in the data.
+plot(bray.nmds)#the red points are Transformed taxon-wise dissimilarities and the circles are Transformed sample-wise dissimilarities.
+
+plot_ordination(ps.log, bray.nmds, color="treatment", 
+shape= "sample_type", title = "Bray-Curtis NMDS plot, log transformed")+
+geom_point(size = 6) + coord_fixed()+
+geom_vline( xintercept = 0, lty = 2, 
+color = alpha("black", alpha = 0.5))+ 
+geom_hline(yintercept = 0, lty = 2, color = alpha(col = "black", 0.5))+
+labs(col="Treatment", shape = "Sample type") + theme_bw() +
+scale_color_manual(values = c("deeppink1", "deepskyblue", "darkorange",  "springgreen4"))
+
+ggplot2::ggsave(plot = wunifrac.nmds.p, filename = "./Outputs/Ordinations/bray.nmds.logtransformed.jpeg",
+ device = "jpeg", dpi= 300, width = 9, height = 6)
+#wunifrac pcoa 
+new_tree <- ape::multi2di(phy_tree(ps.vst))#there was an error in wunifrac calculation, we correct the tree
+phy_tree(ps.vst) <- phy_tree(new_tree)
+phy_tree(ps) <- phy_tree(new_tree)
+
+wuni.pcoa = ordinate(ps.vst, method = "PCoA", distance = "wunifrac")
+evals<-wuni.pcoa$values$Eigenvalues
+
+wunifrac.pcoa = plot_ordination(ps.vst, wuni.pcoa, color="treatment", 
+shape= "sample_type", title = "Weighted UniFrac distance PCoA plot")+
+   labs(col="Treatment", shape = "Sample type")+ geom_point(size = 6) + 
+geom_vline( xintercept = 0, lty = 2, 
+color = alpha("black", alpha = 0.5))+ 
+geom_hline(yintercept = 0, lty = 2, color = alpha(col = "black", 0.5))+
+  coord_fixed(sqrt(evals[2]/evals[1]))+#+stat_ellipse()
+  labs(x = sprintf("PCoA1 [%s%%]", round(evals/sum(evals)*100,1)[1]),
+       y = sprintf("PCoA2 [%s%%]", round(evals/sum(evals)*100, 2)[2])) +
+scale_color_manual(values = c("deeppink1", "deepskyblue", "darkorange",  
+"springgreen4")) + theme_bw()
+
+#wunifrac nmds
+ps.log <- transform_sample_counts(ps, function(x) {log(x+1)})
+
+wunifrac.nmds=ordinate(ps.log, method="NMDS", distance = "wunifrac")
+wunifrac.stress = stressplot(wunifrac.nmds)#in this dataset, R squared shows that the nMDS is perfectly able to capture variation in the data.
+plot(wunifrac.nmds)
+
+wunifrac.nmds.p = plot_ordination(ps.log, wunifrac.nmds, color="treatment", 
+shape= "sample_type", title = "WUNFRAC NMDS plot, log transformed")+
+geom_point(size = 6) + 
+geom_vline( xintercept = 0, lty = 2, 
+color = alpha("black", alpha = 0.5))+ 
+geom_hline(yintercept = 0, lty = 2, color = alpha(col = "black", 0.5))+
+labs(col="Treatment", shape = "Segment") + theme_bw() +
+scale_color_manual(values = c("deeppink1", "deepskyblue", "darkorange",  "springgreen4"))
+
+
+#ggplot2::ggsave(plot = wunifrac.nmds.p, filename = "./Outputs/Ordinations/wunifrac.nmds.logtransformed.jpeg",
+ device = "jpeg", dpi= 300, width = 8, height = 6)
+
+
+
+
+```
+
+
+
+## Gloomer
+
+
+```{r, taxa agglomeration Recepient }
+#A function to create unique names for each ASV. It removes any NA in Order level then attempts to use the name of one level higher taxa for those 
+#who have similar names, e.g. uncultured_bacterium
+
+gloomer = function(ps = data, taxa_level = taxa_level, NArm = "TRUE"){
+    rank.names = c('Kingdom','Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species')
+    
+
+#====================Sometimes in genus level, we might have multiple uncultured organisms, which if we want to make unique out of them for the species level it won't work====
+    #since adding uncultured to uncultered is sill duplication. therefore if the taxa_level is set to species we first make a unique genus and then we go further to the speices===#
+
+#Removing unculured Family
+ps = subset_taxa(ps, !Family %in% c("uncultured", "NA", "uncategorized", "unassigend", "", " "))
+    
+if(taxa_level == "Species") {
+
+    ps = subset_taxa(ps, !Genus %in% NA)#we remove genus tagged NA
+phyloseq::tax_table(ps)[, taxa_level] <- ifelse(is.na(phyloseq::tax_table(ps)[, taxa_level]), paste0("unknown"), paste(phyloseq::tax_table(ps)[, taxa_level]))#convert NA in species into unknown
+    
+  physeq = tax_glom(physeq = ps, taxrank = taxa_level, NArm = NArm)
+  taxdat = phyloseq::tax_table(physeq)[, seq_along(rank.names[1:which(rank.names == taxa_level)])]
+
+   taxdat = taxdat[complete.cases(taxdat),] %>% as.data.frame
+    otudat = otu_table(physeq)
+   
+#first take care of the uncultured genus
+taxdat[,6] = ifelse(taxdat[,6] %in% c("uncategorized", NA, "uncultured", "unassigend", "", " "),
+       paste0("[", taxdat[,length(rank.names[1:which(rank.names=="Genus")])-1], "]", "_", taxdat[,6]), taxdat[,6])
+    
+spec1 = taxdat[, taxa_level] %>% as.vector
+spec2  = taxdat[, taxa_level] %>% as.vector
+
+    uni  = matrix(NA, ncol = length(spec2), nrow = length(spec1))
+    for(i in seq_along(spec1)){
+        for(j in seq_along(spec2)){
+    uni[i, j] = ifelse(spec1[i] == spec2[j] , "TRUE", "FALSE")
+    }
+        }
+
+rownames(uni) <-spec1
+colnames(uni) <- spec2   
+uni[upper.tri(uni, diag = TRUE)] = 0 #get rid of diagonals and upper triangle
+
+duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE") 
+
+if(dim(duplis)[[1]] > 0) {
+duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE") %>% dplyr::select(1) %>% unique() %>% unlist %>% as.vector
+taxdat = taxdat %>% mutate( uni= ifelse(taxdat[, taxa_level] %in% duplis,
+                    paste0("[", taxdat[,length(rank.names[1:which(rank.names==taxa_level)])-1], "]", "_", taxdat[,taxa_level]), taxdat[,taxa_level]))
+
+#check if all the names are unique at species level, otherwise we will bring family instead of genus
+   dupies <-  taxdat[duplicated(taxdat[,"uni"]), "uni"] 
+    if(length(dupies)>0) {
+        taxdat = taxdat %>% data.frame %>% mutate( uni2= ifelse(taxdat[, "uni"] %in% dupies,
+                    paste0("[", taxdat[,length(rank.names[1:which(rank.names==taxa_level)])-2], "]", "_", taxdat[,"uni"]), taxdat[,"uni"]))
+        
+        taxdat[, taxa_level] = taxdat[, "uni2"]
+        taxdat[, "uni"] <- NULL
+        taxdat[, "uni2"] <- NULL
+        taxdat <- as(taxdat, "matrix")   
+        rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+        rownames(taxdat) <- taxdat[, taxa_level]
+        taxdat <- phyloseq::tax_table(taxdat)
+        taxa_names(physeq) <- taxa_names(taxdat)
+        phyloseq::tax_table(physeq) <- taxdat
+        otu_table(physeq) <- otudat
+        
+    }
+    else 
+    {
+        
+taxdat[, taxa_level] = taxdat[, "uni"]
+taxdat[, "uni"] <- NULL
+taxdat <- as(taxdat, "matrix")   
+rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+rownames(taxdat) <- taxdat[, taxa_level]
+taxdat <- phyloseq::tax_table(taxdat)
+taxa_names(physeq) <- taxa_names(taxdat)
+phyloseq::tax_table(physeq) <- taxdat
+otu_table(physeq) <- otudat
+           }
+    
+} else {
+    
+taxdat <- as.matrix(taxdat) 
+taxdat <- phyloseq::tax_table(taxdat)
+rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+rownames(taxdat) <- taxdat[, taxa_level]
+taxdat <- phyloseq::tax_table(taxdat)
+taxa_names(physeq) <- taxa_names(taxdat)
+phyloseq::tax_table(physeq) <- taxdat
+otu_table(physeq) <- otudat
+    
+}
+       
+    
+#==========================================# 
+} else if (taxa_level == "Genus") {
+    
+    physeq = tax_glom(physeq = ps, taxrank = taxa_level, NArm = NArm)
+    taxdat = phyloseq::tax_table(physeq)[, seq_along(rank.names[1:which(rank.names == taxa_level)])]
+    
+   taxdat = taxdat[complete.cases(taxdat),] %>% as.data.frame
+    otudat = otu_table(physeq)
+    
+# take care of the uncultured genus
+taxdat[,6] = ifelse(taxdat[,6] %in% c("uncategorized", NA, "uncultured", "unassigend", "", " ", "XI", "group"),
+       paste0("[", taxdat[,length(rank.names[1:which(rank.names==taxa_level)])-1], "]", "_", taxdat[,taxa_level]), taxdat[,taxa_level])
+    
+gen1 = taxdat[, taxa_level] %>% as.vector
+gen2  = taxdat[, taxa_level] %>% as.vector
+
+    uni  = matrix(NA, ncol = length(gen2), nrow = length(gen1))
+    for(i in seq_along(gen1)){
+        for(j in seq_along(gen2)){
+    uni[i, j] = ifelse(gen1[i] == gen2[j] , "TRUE", "FALSE")
+    }
+        }
+
+rownames(uni) <-gen1
+colnames(uni) <- gen2   
+uni[upper.tri(uni, diag = TRUE)] = 0 #get rid of diagonals and upper triangle
+
+duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE")
+
+        if(dim(duplis)[[1]] > 0){#if there is not duplications, we can simply use the taxa names as the row name
+    
+        duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE") %>% dplyr::select(1)%>% unique() %>% unlist %>% as.vector
+        taxdat = taxdat %>% mutate( uni= ifelse(taxdat[, taxa_level] %in% duplis, 
+                    paste0("[", taxdat[,length(rank.names[1:which(rank.names==taxa_level)])-1], "]", "_", taxdat[,taxa_level]), taxdat[,taxa_level]))
+    
+        taxdat[, taxa_level] = taxdat[, "uni"]
+        taxdat[, "uni"] <- NULL
+
+        taxdat <- as(taxdat, "matrix")
+ 
+        rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+        rownames(taxdat) <- taxdat[taxdat[,taxa_level] %in% rownames(otudat), taxa_level]
+        taxdat <- as.matrix(taxdat) 
+        taxdat <- phyloseq::tax_table(taxdat)
+        taxa_names(physeq) <- taxa_names(taxdat)
+        phyloseq::tax_table(physeq) <- taxdat
+        otu_table(physeq) <- otudat
+ 
+        } else {
+
+        taxdat <- as.matrix(taxdat) 
+        taxdat <- phyloseq::tax_table(taxdat)
+        rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+        rownames(taxdat) <- taxdat[, taxa_level]
+        taxdat <- phyloseq::tax_table(taxdat)
+        taxa_names(physeq) <- taxa_names(taxdat)
+        phyloseq::tax_table(physeq) <- taxdat
+        otu_table(physeq) <- otudat
+       }   
+    
+} else {
+    
+    
+physeq = tax_glom(physeq = ps, taxrank = taxa_level, NArm = TRUE)
+    taxdat = phyloseq::tax_table(physeq)[, seq_along(rank.names[1:which(rank.names == taxa_level)])]
+    
+taxdat = taxdat[complete.cases(taxdat),] %>% as.data.frame
+otudat = otu_table(physeq)
+    
+spec1 = taxdat[, taxa_level] %>% as.vector
+spec2  = taxdat[, taxa_level] %>% as.vector
+
+    uni  = matrix(NA, ncol = length(spec2), nrow = length(spec1))
+    for(i in seq_along(spec1)){
+        for(j in seq_along(spec2)){
+    uni[i, j] = ifelse(spec1[i] == spec2[j] , "TRUE", "FALSE")
+    }
+        }
+
+rownames(uni) <-spec1
+colnames(uni) <- spec2   
+uni[upper.tri(uni, diag = TRUE)] = 0 #get rid of diagonals and upper triangle
+
+duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE")
+
+if(dim(duplis)[[1]] > 0){#if there is not duplications, we can simply use the taxa names as the row name
+    
+    duplis = uni %>% reshape2::melt() %>% filter(value == "TRUE") %>% dplyr::select(1)%>% unique() %>% unlist %>% as.vector
+taxdat = taxdat %>% mutate( uni= ifelse(taxdat[, taxa_level] %in% duplis, 
+                    paste(taxdat[,length(rank.names[1:which(rank.names==taxa_level)])-1], "_", taxdat[,taxa_level]), taxdat[,taxa_level]))
+    
+taxdat[, taxa_level] = taxdat[, "uni"]
+taxdat[, "uni"] <- NULL
+taxdat <- as.matrix(taxdat)   
+rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+rownames(taxdat) <- taxdat[, taxa_level]
+taxdat <- phyloseq::tax_table(taxdat)
+taxa_names(physeq) <- taxa_names(taxdat)
+phyloseq::tax_table(physeq) <- taxdat
+otu_table(physeq) <- otudat
+} else {
+
+taxdat <- as.matrix(taxdat) 
+taxdat <- phyloseq::tax_table(taxdat)
+rownames(otudat) <- taxdat[rownames(taxdat) %in% rownames(otudat), taxa_level]
+rownames(taxdat) <- taxdat[, taxa_level]
+taxdat <- phyloseq::tax_table(taxdat)
+taxa_names(physeq) <- taxa_names(taxdat)
+phyloseq::tax_table(physeq) <- taxdat
+otu_table(physeq) <- otudat
+}
+#ps = phyloseq(otu_table(otudat, taxa_are_rows = T), phyloseq::tax_table(as.matrix(taxdat)), sample_data(physeq))
+ 
+
+}
+return(physeq) 
+    }
+
+    
+
+```
+## Barplot phylum
+
+
+```{r, Barplot from Phylum Recepient material}
+#making barplot based from glomerated phyloseq from:
+# https://github.com/farhadm1990/16S-rRNA-amplicon/blob/main/R_steps.md
+
+
+phylcol=c('darkgreen', "gold",'darkmagenta','cadetblue2', 'cornflowerblue', 'plum4',
+          'darkgoldenrod3','aquamarine4', 'cadetblue2', 'darkgreen', 'mediumseagreen', 'red','Gray',
+        'steelblue2','darkmagenta')
+
+phylcol
+
+#Agglomeration
+phyl_rec <- gloomer(rar_rec, "Phylum", NArm = TRUE) 
+
+ 
+
+
+
+#Merging counts for treatments
+merged_phyl_rec <- merge_samples(phyl_rec, "Group") 
+
+merged_phyl_rec = transform_sample_counts(merged_phyl_rec, function(x){x/sum(x)*100}) 
+
+
+
+sample_data(merged_phyl_rec)$Group <- factor(rownames(sample_data(merged_phyl_rec)), levels = c("Control","FFT"))
+                                     
+#Barplot                                    
+p_rec = plot_bar(merged_phyl_rec, fill="Phylum", x = "Group") + 
+  geom_col(color = "white", show.legend = F) +
+  scale_fill_manual(values = list("Actinobacteriota" = "aquamarine4",
+     "Bacteroidota" = "gold",
+     "Firmicutes" = "red",
+     "Proteobacteria" = "darkgoldenrod3")) + 
+    xlab("Treatments") + ylab("") + 
+scale_y_continuous(labels = function(x) format(x, scientific = F), n.breaks = 10)+
+  #to print the scale in scientific notation
+            theme_bw() + 
+            theme(text = element_text(size =15, face = "bold"))
+
+ggsave(plot = p_rec, "./outputs/rec_stack_phylum.jpeg", device = "jpeg", height = 8, width = 7)
+
+```
+
+```{r, taxa agglomeration Phylom Donor}
+phylcol=c('darkgreen', "gold",'darkmagenta','cadetblue2', 'cornflowerblue', 'plum4',
+          'darkgoldenrod3','aquamarine4', 'cadetblue2', 'darkgreen', 'mediumseagreen', 'red','Gray',
+        'steelblue2','darkmagenta')
+list("Actinobacteriota" = "aquamarine4",
+     "Bacteroidota" = "gold",
+     "Firmicutes" = "red",
+     "Proteobacteria" = "darkgoldenrod3")
+#Agglomeration
+phyl_don <- gloomer(rar_don, "Phylum", NArm = TRUE) 
+pooled_phyl_don = subset_samples(phyl_don, Extract_name == "Pooled35611")
+phyl_don@tax_table
+pooled_phyl_don = transform_sample_counts(pooled_phyl_don, fun = function(x){x/sum(x)*100}) 
+
+p_don = plot_bar(pooled_phyl_don, fill="Phylum") + 
+  geom_col(color = "white") +
+  scale_fill_manual(values = list("Actinobacteriota" = "aquamarine4",
+     "Bacteroidota" = "gold",
+     "Firmicutes" = "red",
+     "Proteobacteria" = "darkgoldenrod3")) + 
+    xlab("Pooled donor") + ylab("Relative abundance, %") + 
+scale_y_continuous(labels = function(x) format(x, scientific = F), n.breaks = 10)+
+  #to print the scale in scientific notation
+            theme_bw() + 
+            theme(text = element_text(size =15, face = "bold")) + 
+  guides(fill = guide_none())
+
+ggsave(plot = p_don, "./outputs/don_stack_phylum.jpeg", device = "jpeg", height = 8, width = 6)
+
+fam_rec@tax_table[,"Family"]
+pooled_fam_don@tax_table[,"Family"]
+
+
+# Patchwork
+
+p_don + p_rec + plot_layout(widths = 1) #+ plot_annotation("I am a title", "I am a legend", "I am a caption")
+
+ggsave("./outputs/phyl_stack_compare.jpeg", device = "jpeg", width = 8, height = 7, dpi = 300)
+
+colors()
+RColorBrewer::brewer.pal.info
+```
+
+##Barplot Family
+
+```{r, Family level pooled donor and recipient barplot}
+
+don_tax = otu_table(pooled_fam_don) %>% rownames()
+rec_tax = rownames(fam_rec@tax_table)
+
+shared = rec_tax[rec_tax%in%don_tax]
+unique_rec = rec_tax[!rec_tax%in%don_tax]
+unique_don = don_tax[!don_tax%in%rec_tax]
+
+
+color_list = list( shared_colors = list("Lachnospiraceae" = "#FF0000",
+                   "Corynebacteriaceae" = "#00FF00",
+                   "Pasteurellaceae" = "#0000FF",
+                   "Erysipelotrichaceae" = "#FFA500",
+                   "Enterobacteriaceae" = "#FF00FF",
+                   "Lactobacillaceae" = "#008080",
+                   "Micrococcaceae" = "#800080",
+                   "Actinomycetaceae" = "#008000",
+                   "Peptostreptococcaceae" = "#FFC0CB",
+                   "Bifidobacteriaceae" = "#4B0082",
+                   "Enterococcaceae" = "#FFFF90",
+                   "Staphylococcaceae" = "#808080",
+                   "Veillonellaceae" = "#800000",
+                   "Oscillospiraceae" = "#00FFFF",
+                   "Clostridiaceae" = "#000080",
+                   "Streptococcaceae" = "#FF69B4",
+                   "Carnobacteriaceae" = "#00BFFF",
+                   "Bacteroidaceae" = "#ADD8E6",
+                   "Moraxellaceae" = "#8000FF"), unique_rec = list("Microbacteriaceae" = "#FF7F50","Sphingomonadaceae" = "#FFD700","Comamonadaceae" = "#9ACD32","Erysipelatoclostridiaceae" = "#1f77b4","Oxalobacteraceae" = "#DC143C",
+  "Beijerinckiaceae" = "#00FA9A","Aerococcaceae" = "#FF4500","Bogoriellaceae" = "#9932CC","Dietziaceae" = "#FF1493","Bacillaceae" = "#008080"), unique_don = list(
+  "Acidaminococcaceae"                       = "#FA8072",
+  "Rikenellaceae"                            = "#9370DB",
+  "[Peptostreptococcales-Tissierellales]_XI" = "#2E8B57",
+  "Coriobacteriaceae"                        = "#FF8C00",
+  "Prevotellaceae"                           = "#66CDAA",
+  "Christensenellaceae"                      = "#7f7f7f",
+  "Ruminococcaceae"                          = "#ADFF2F",
+  "Barnesiellaceae"                          = "#8A2BE2",
+  "Muribaculaceae"                           = "#98df8a",
+  "[Oscillospirales]_group"                  = "#D2691E",
+  "Tannerellaceae"                           = "#FFB6C1",
+  "Eggerthellaceae"                          = "#FF00AA"
+))
+
+
+ps_don_phyl = gloomer(ps = rar_don, taxa_level = "Phylum", NArm = TRUE)
+ps_don_gen = gloomer(ps = rar_don, taxa_level = "Genus", NArm = TRUE)
+
+
+#Agglomeration
+fam_rec <- gloomer(rar_rec, "Family", NArm = TRUE) 
+
+fam_don <- gloomer(rar_don, "Family", NArm = TRUE) 
+pooled_fam_don = subset_samples(fam_don, Extract_name == "Pooled35611")
+pooled_fam_don@tax_table
+pooled_fam_don = transform_sample_counts(pooled_fam_don, fun = function(x){x/sum(x)*100})
+
+#taking care of wierd taxa names
+temp_taxa = pooled_fam_don@tax_table %>% data.frame() %>% mutate(new_fam = ifelse(Family %in% c("XI" , "group"),  glue("[{Order}]_{Family}"),  Family))  %>% mutate(Family =NULL, Family = new_fam, new_fam = NULL) 
+
+rownames(temp_taxa) <- temp_taxa$Family
+temp_taxa = as(temp_taxa, 'matrix')
+
+
+pooled_fam_don@tax_table <- phyloseq::tax_table(temp_taxa)
+taxa_names(pooled_fam_don) <- rownames(pooled_fam_don@tax_table)
+
+#Merging counts for treatments
+merged_fam_rec <- merge_samples(fam_rec, "Group") 
+
+merged_fam_rec = transform_sample_counts(merged_fam_rec, function(x){x/sum(x)*100}) 
+merged_fam_rec@sam_data$Group <- rownames(merged_fam_rec@sam_data)
+
+
+
+#creating barplot from recipient
+f_rec = plot_bar(merged_fam_rec, fill="Family", x = "Group") + 
+  geom_col(color = NA ) +
+  scale_fill_manual(values = unlist(c( color_list[["shared_colors"]], color_list[["unique_rec"]]))) + 
+    xlab("Treatments") + ylab("") + 
+scale_y_continuous(labels = function(x) format(x, scientific = F), n.breaks = 10)+
+  #to print the scale in scientific notation
+            theme_bw() + 
+            theme(text = element_text(size =15, face = "bold")) +
+  guides(fill = guide_none())
+
+
+
+
+
+#creating barplot from donor material
+f_don = plot_bar(pooled_fam_don) + 
+  geom_col(aes(fill = Family),  show.legend = FALSE, color = NA) +
+  scale_fill_manual(values = unlist(c( color_list[["shared_colors"]], color_list[["unique_don"]]))) + 
+    xlab("Pooled Donor") + ylab("") + 
+scale_y_continuous(labels = function(x) format(x, scientific = F), n.breaks = 10)+
+  #to print the scale in scientific notation
+            theme_bw() + 
+            theme(text = element_text(size =15, face = "bold"), legend.position = "right", legend.justification =1) +
+   guides(fill = guide_none())
+
+
+#A seperate plot for the costumized legend
+col_vec = c()
+
+for (i in 1:length(names(color_list))){
+  
+  col_vec[[i]] <- unlist(color_list[[i]])
+  
+}
+
+col_vec = unlist(col_vec)
+leg_p = as.data.frame(col_vec) %>% rownames_to_column("Family") %>% 
+ggplot() +
+  geom_point(aes(1,1, color = Family), shape = 15, size = 6) + 
+  scale_color_manual(values = col_vec) +
+  theme(axis.title = element_blank(), axis.text = element_blank(), panel.background = element_rect(fill = 'white'),axis.ticks = element_blank(), panel.grid = element_blank(), plot.background = element_blank(), panel.ontop = TRUE, legend.title  = element_text(face = "bold")
+        ) +
+  guides(color = guide_legend(ncol = 2))
+
+# Patchwork
+f_don + f_rec + leg_p + plot_layout(widths = c(1.5, 2,.1)) + plot_annotation("Family-level comparison between donor and treatment groups", Caption_fami_barplot)
+
+ggsave("./outputs/family_don_rec_stackbar.jpeg", device = "jpeg", dpi = 500, width = 15, height = 12)
+
+
+
+
+
+
+
+
+```
+
+ 
+
+
+
+
+```{r, wilcoxen rank test}
+
+ct = fam_rec@otu_table[, fam_rec@sam_data$Group == "Control"]
+fft = fam_rec@otu_table[, fam_rec@sam_data$Group == "FFT"]
+
+
+
+
+x = apply(ct, 1, function(x){mean(x)}) %>% as.matrix()
+y = apply(fft, 1, function(x){mean(x)}) %>% as.matrix()
+
+colnames(x)<-"ct"
+colnames(y)<-"fft"
+
+
+
+wilcox.test(x, y, paired = TRUE)
+
+df = rbind(ct %>% data.frame() %>% reshape2::melt() %>% mutate(treat = "Control"),
+fft %>% data.frame() %>% reshape2::melt() %>% mutate(treat = "FFT"))
+
+df$treat <- as.factor(df$treat)
+
+wilx_ml = wilcox.test(value ~ treat, data = df, conf.int = T)
+
+library(glue)
+Caption_fami_barplot <- glue("Wilcox rank test between recipients p-value: {wilx_ml$p.value}")
+```
+
+
+
+```{r}
+
+
+col_fil <- pal_jco("default")(10)
+
+col_scale <- scale_color_jco()
+```
+
